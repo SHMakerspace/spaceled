@@ -28,6 +28,7 @@
 
 #include <Adafruit_GFX.h>
 #include <gfxfont.h>
+
 #define PIN_1D1 28
 #define PIN_1D2 29
 #define PIN_1LATCH 26 
@@ -115,6 +116,8 @@ void FillBuffer(byte b){
   }
 }
 
+const int delayPeriod = 42000000/1000*5; //42000000 is the "TCCLKS_TIMER_CLOCK1" clock speed / 1000 for 1ms
+
 void setup() {
   // put your setup code here, to run once:
   //Serial.begin(115200);
@@ -142,16 +145,23 @@ void setup() {
   panel.setCursor(0, 0);
 
   panel.setTextColor(LED_MAGENTA);  
-  panel.println("SH");
-  panel.setCursor(9, 8);
+  panel.println("Hello!");
+  panel.setCursor(1, 8);
 
-  panel.setTextColor(LED_CYAN);  
-  panel.println("Makerspace");
+  //panel.setTextColor(LED_CYAN);  
+  //panel.println("Makerspace");
+  // initialize Timer1 ~400Hz
+  pmc_set_writeprotect(false);
+  pmc_enable_periph_clk((uint32_t)TC8_IRQn);
+  TC_Configure(TC2, 2,TC_CMR_WAVE|TC_CMR_WAVSEL_UP_RC|TC_CMR_TCCLKS_TIMER_CLOCK1);
+  TC_SetRC(TC2, 2, delayPeriod);
 
-}
+  TC2->TC_CHANNEL[2].TC_IER=TC_IER_CPCS;
+  TC2->TC_CHANNEL[2].TC_IMR=TC_IMR_CPCS;
+  TC2->TC_CHANNEL[2].TC_IDR=~TC_IER_CPCS;
 
-ISR(TIMER1_COMPA_vect){     // timer compare interrupt service routine
-  UpdateFrame();
+  TC_Start(TC2, 2);
+  NVIC_EnableIRQ(TC8_IRQn);
 }
 
 uint8_t bank = 0;
@@ -159,8 +169,8 @@ uint8_t bank = 0;
 void UpdateFrame() {
   byte * f = frame[bank];
   for (uint16_t n = 0; n<384; n++) {
-    digitalWrite(PIN_1D1, *f && 0x01);      // We use the low nibble on PortD for Panel 1 & 2
-    digitalWrite(PIN_1D2, (*f && 0x02)>>1);    // We use the high nibble on PortB for Panel 3 & 4
+    digitalWrite(PIN_1D1, *f & 0x40);      // We use the low nibble on PortD for Panel 1 & 2
+    digitalWrite(PIN_1D2, *f & 0x80);    // We use the high nibble on PortB for Panel 3 & 4
     f++;
     digitalWrite(PIN_1CLK, LOW);
     digitalWrite(PIN_1CLK, HIGH);
@@ -183,7 +193,60 @@ void UpdateFrame() {
 
   if (++bank>3) bank=0;
 }
-  
+
+
+void TC8_Handler()
+{
+  TC_GetStatus(TC2, 2);
+  UpdateFrame();
+}
+
+
+String text = "Hello World!!";
+int textSize = 1;
+int characterWidths[] = {6,12};
+int verticalOffsets[] = {4,0};
+int panelWidth = 63;
+int scrollDelay = 75;
+int color = LED_GREEN;
+int offset = -20000;
+int increment = +3;
+
+void scrollText ()
+{
+  int characterWidth = characterWidths[textSize-1];
+  int correctedOffset = offset;
+  int stringLength = text.length();
+  int startChar, endChar;
+
+
+  if(offset<(-1*(stringLength-1)*characterWidth)) {
+    offset = panelWidth-characterWidth;
+  }
+  if(offset>panelWidth-characterWidth) {
+    offset = (-1*(stringLength-1)*characterWidth);
+  }
+  FillBuffer(0x00);         // Set all LEDs off. (Black)
+  panel.setTextSize(textSize);
+  correctedOffset = offset;
+  if(offset>=0) {
+    startChar = 0;
+  } else {
+    startChar = abs(offset-characterWidth)/characterWidth;
+    correctedOffset = offset%characterWidth+characterWidth;
+  }
+  endChar = (panelWidth-offset)/characterWidth;
+  if(endChar > stringLength) {
+    endChar = stringLength;
+  }
+  panel.setCursor(correctedOffset, verticalOffsets[textSize-1]);
+  panel.setTextColor(color);
+  panel.print(text.substring(startChar, endChar));
+  offset = offset + increment;
+
+  delay(scrollDelay);
+}
+
 void loop() {
   // put your main code here, to run repeatedly:
 
@@ -197,7 +260,5 @@ void loop() {
 
 
   // Step 1 - Set output off (OE = high) and LATCH to LOW.
-  digitalWrite(led, LOW);
-  UpdateFrame();
-  digitalWrite(led, LOW);
+  scrollText();
 }
